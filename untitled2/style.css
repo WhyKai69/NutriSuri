@@ -1,0 +1,17 @@
+.result-card {
+    padding: 12px 16px;
+    margin: 8px 0;
+    border-radius: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 1rem;
+    border-left: 5px solid #ddd;
+    transition: 0.2s;
+    background: #f8fafc;
+}
+
+.result-card.green { background: #ecfdf5 !important; border-left-color: #10b981 !important; }
+.result-card.yellow { background: #fffbeb !important; border-left-color: #f59e0b !important; }
+.result-card.red { background: #fef2f2 !important; border-left-color: #ef4444 !important; }
+.result-card.allergy { background: #fee2e2 !important; border-left-color: #dc2626 !important; font-weight: bold; }

@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NutriSuri - Smart Nutrition Scanner</title>
+
+    <!-- Font Awesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <!-- Tesseract.js -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@v5.0.4/dist/tesseract.min.js"></script>
+
+    <style>
+        :root {
+            --primary: #7e22ce;
+            --success: #10b981;    /* GREEN = SAFE */
+            --warning: #f59e0b;    /* YELLOW = CAUTION */
+            --danger: #ef4444;     /* RED = AVOID */
+            --allergy-red: #dc2626;
+            --border: #e2e8f0;
+            --text: #1e1b4b;
+        }
+
+        body {
+            font-family: "Segoe UI", sans-serif;
+            background: linear-gradient(135deg, #e9d5ff, #c7d2fe);
+            color: var(--text);
+            padding: 20px;
+            margin: 0;
+        }
+
+        .container { max-width: 1000px; margin: 0 auto; }
+
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        .card-title {
+            font-size: 1.8rem;
+            color: var(--primary);
+            margin-bottom: 16px;
+            text-align: center;
+        }
+
+        input, textarea, button {
+            width: 100%; padding: 12px; margin: 8px 0;
+            border-radius: 8px; border: 1.5px solid var(--border);
+            font-size: 1rem;
+        }
+
+        .btn {
+            background: linear-gradient(135deg, var(--primary), #4f46e5);
+            color: white; font-weight: 600; cursor: pointer; border: none;
+            transition: 0.3s;
+        }
+
+        .btn:hover { transform: translateY(-2px); }
+
+        .hidden { display: none; }
+
+        .scanner-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            margin-top: 16px;
+        }
+
+        @media (max-width: 768px) {
+            .scanner-grid { grid-template-columns: 1fr; }
+        }
+
+        .scanner-box {
+            border: 2px dashed #9ca3af;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            background: #f8f9ff;
+            transition: 0.3s;
+        }
+
+        .scanner-box:hover { border-color: var(--primary); background: #f3e8ff; }
+
+        .scanner-title { font-weight: 700; color: var(--primary); margin-bottom: 8px; }
+        .scanner-desc { font-size: 0.9rem; color: #6b7280; margin-bottom: 12px; }
+
+        /* UK-STYLE LABEL */
+        .uk-nutrition {
+            display: inline-block;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            overflow: hidden;
+            font-family: "Segoe UI", sans-serif;
+            width: 260px;
+            margin: 20px auto;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        }
+
+        .uk-row { display: flex; border-bottom: 1px solid #eee; min-height: 48px; }
+        .uk-row:last-child { border-bottom: none; }
+        .uk-left { flex: 1; padding: 8px 12px; background: #fff; font-size: 0.95rem; }
+        .uk-right { width: 70px; padding: 8px; font-weight: 700; text-align: center; color: white; font-size: 0.9rem; }
+        .uk-green { background: var(--success); }
+        .uk-amber { background: var(--warning); color: #111; }
+        .uk-red { background: var(--danger); }
+        .uk-sub { font-size: 0.8rem; color: #666; display: block; }
+
+        /* RESULT CARDS - GREEN = SAFE TO EAT */
+        .result-card {
+            padding: 12px 16px;
+            margin: 8px 0;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 1rem;
+            border-left: 5px solid #ddd;
+            transition: 0.2s;
+            background: #f8fafc;
+        }
+
+        .result-card.green  { background: #ecfdf5 !important; border-left-color: #10b981 !important; }
+        .result-card.yellow { background: #fffbeb !important; border-left-color: #f59e0b !important; }
+        .result-card.red    { background: #fef2f2 !important; border-left-color: #ef4444 !important; }
+        .result-card.allergy { background: #fee2e2 !important; border-left-color: #dc2626 !important; font-weight: bold; }
+
+        .allergy-warning {
+            background: #fee2e2;
+            border: 1px solid var(--allergy-red);
+            color: var(--allergy-red);
+            padding: 12px;
+            border-radius: 8px;
+            margin: 12px 0;
+            text-align: center;
+            font-weight: 600;
+            display: none;
+        }
+
+        .bmi-box {
+            background: #f0f9ff;
+            border-radius: 10px;
+            padding: 12px;
+            margin-top: 12px;
+            text-align: center;
+            font-size: 1.1rem;
+        }
+
+        .drop-zone {
+            margin: 16px 0;
+            padding: 32px;
+            border: 3px dashed #9ca3af;
+            border-radius: 16px;
+            text-align: center;
+            background: #f9f7ff;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 1.1rem;
+            color: #6b7280;
+        }
+
+        .drop-zone.dragover {
+            background: #f0e6ff;
+            border-color: var(--primary);
+            color: var(--primary);
+            transform: scale(1.02);
+            box-shadow: 0 8px 25px rgba(126, 34, 206, 0.15);
+        }
+
+        .drop-zone i { font-size: 2.5rem; margin-bottom: 8px; display: block; color: var(--primary); }
+        .drop-zone small { display: block; margin-top: 8px; font-size: 0.85rem; color: #888; }
+    </style>
+</head>
+
+<body>
+<div class="container">
+    <header>
+        <h1>NutriSuri</h1>
+        <p>Smart Nutrition Scanner</p>
+    </header>
+
+    <!-- PROFILE -->
+    <section id="login-section" class="card">
+        <h2 class="card-title">Your Health Profile</h2>
+        <form id="profile-form">
+            <input type="text" id="name" placeholder="Full Name" required />
+            <input type="email" id="email" placeholder="Email" required />
+            <input type="number" id="age" placeholder="Age" required />
+            <input type="number" id="height" placeholder="Height (feet)" step="0.1" required />
+            <input type="number" id="weight" placeholder="Weight (kg)" required />
+
+            <div style="margin: 16px 0;">
+                <p style="font-weight: 600; margin-bottom: 8px;">Allergies (check all):</p>
+                <div class="allergy-group">
+                    <label class="allergy-option"><input type="checkbox" name="allergy" value="lactose"> Lactose</label>
+                    <label class="allergy-option"><input type="checkbox" name="allergy" value="egg"> Egg</label>
+                    <label class="allergy-option"><input type="checkbox" name="allergy" value="seafood"> Seafood</label>
+                    <label class="allergy-option"><input type="checkbox" name="allergy" value="nuts"> Nuts</label>
+                    <label class="allergy-option"><input type="checkbox" name="allergy" value="gluten"> Gluten</label>
+                    <label class="allergy-option"><input type="checkbox" name="allergy" value="soy"> Soy</label>
+                </div>
+            </div>
+
+            <textarea id="health-issues" placeholder="Other concerns (optional)"></textarea>
+            <button type="submit" class="btn">Continue</button>
+        </form>
+    </section>
+
+    <!-- DASHBOARD -->
+    <section id="dashboard-section" class="hidden">
+        <div class="card">
+            <h2 class="card-title">Scan Food Label</h2>
+            <video id="camera-feed" autoplay playsinline muted style="width:100%; height:280px; background:#000; border-radius:12px; object-fit: cover;"></video>
+
+            <div style="margin-top:12px; display:flex; gap:8px;">
+                <button id="start-camera" class="btn">Start Camera</button>
+                <button id="stop-camera" class="btn hidden">Stop</button>
+            </div>
+
+            <div class="drop-zone" id="drop-zone">
+                <i class="fas fa-cloud-upload-alt"></i>
+                <strong>Drag & drop your photo here</strong><br>
+                or click to select
+                <small>Supports JPG, PNG, WEBP</small>
+                <input type="file" id="file-input" accept="image/*" hidden />
+            </div>
+
+            <div class="bmi-box">
+                <div>BMI: <strong id="bmi-value">--</strong></div>
+                <div>Status: <strong id="bmi-category">Not set</strong></div>
+            </div>
+        </div>
+
+        <div class="scanner-grid">
+            <div class="scanner-box">
+                <div class="scanner-title">Scan Nutrition</div>
+                <div class="scanner-desc">Sugars • Salt • Calories</div>
+                <button class="btn btn-scan" id="scan-nutrition" disabled>Scan Now</button>
+            </div>
+            <div class="scanner-box">
+                <div class="scanner-title">Scan Ingredients</div>
+                <div class="scanner-desc">Allergy Check (6 types)</div>
+                <button class="btn btn-scan" id="scan-ingredients" disabled>Scan Now</button>
+            </div>
+        </div>
+
+        <!-- NUTRITION RESULTS -->
+        <div id="nutrition-results" class="card hidden">
+            <h2 class="card-title">Nutrition Analysis</h2>
+            <div id="nutrition-list"></div>
+
+            <div style="text-align:center; margin-top:20px;">
+                <div class="uk-nutrition" id="uk-label">
+                    <div class="uk-row">
+                        <div class="uk-left">Energy <span class="uk-sub" id="energy-sub">-- kcal</span></div>
+                        <div class="uk-right" id="energy-right">--%</div>
+                    </div>
+                    <div class="uk-row">
+                        <div class="uk-left">Sugars <span class="uk-sub" id="sugars-sub">-- g</span></div>
+                        <div class="uk-right" id="sugars-right"></div>
+                    </div>
+                    <div class="uk-row">
+                        <div class="uk-left">Salt <span class="uk-sub" id="salt-sub">-- g</span></div>
+                        <div class="uk-right" id="salt-right"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- INGREDIENT RESULTS -->
+        <div id="ingredient-results" class="card hidden">
+            <h2 class="card-title">Allergy Check</h2>
+            <div id="allergy-warning" class="allergy-warning">
+                <strong>Warning:</strong> This product may contain ingredients you're allergic to!
+            </div>
+            <div id="ingredient-list"></div>
+        </div>
+    </section>
+</div>
+
+<script>
+    const state = {
+        cameraActive: false,
+        stream: null,
+        bmi: null,
+        bmiCategory: null,
+        allergies: [],
+        lastImage: null
+    };
+
+    const elements = {
+        login: document.getElementById("login-section"),
+        dashboard: document.getElementById("dashboard-section"),
+        profileForm: document.getElementById("profile-form"),
+        cameraFeed: document.getElementById("camera-feed"),
+        startCam: document.getElementById("start-camera"),
+        stopCam: document.getElementById("stop-camera"),
+        dropZone: document.getElementById("drop-zone"),
+        fileInput: document.getElementById("file-input"),
+        bmiValue: document.getElementById("bmi-value"),
+        bmiCategory: document.getElementById("bmi-category"),
+        scanNutritionBtn: document.getElementById("scan-nutrition"),
+        scanIngredientsBtn: document.getElementById("scan-ingredients"),
+        nutritionResults: document.getElementById("nutrition-results"),
+        nutritionList: document.getElementById("nutrition-list"),
+        ingredientResults: document.getElementById("ingredient-results"),
+        ingredientList: document.getElementById("ingredient-list"),
+        allergyWarning: document.getElementById("allergy-warning")
+    };
+
+    // PROFILE
+    elements.profileForm.addEventListener("submit", e => {
+        e.preventDefault();
+        const h = parseFloat(document.getElementById("height").value) * 0.3048;
+        const w = parseFloat(document.getElementById("weight").value);
+        state.bmi = w / (h * h);
+        state.bmiCategory = state.bmi < 18.5 ? "Underweight"
+            : state.bmi < 25 ? "Normal weight"
+                : state.bmi < 30 ? "Overweight" : "Obesity";
+        state.allergies = Array.from(document.querySelectorAll('input[name="allergy"]:checked')).map(c => c.value);
+
+        elements.bmiValue.textContent = state.bmi.toFixed(1);
+        elements.bmiCategory.textContent = state.bmiCategory;
+
+        elements.login.classList.add("hidden");
+        elements.dashboard.classList.remove("hidden");
+    });
+
+    // CAMERA
+    elements.startCam.addEventListener("click", async () => {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        state.stream = stream;
+        elements.cameraFeed.srcObject = stream;
+        state.cameraActive = true;
+        elements.startCam.classList.add("hidden");
+        elements.stopCam.classList.remove("hidden");
+        enableScanButtons();
+    });
+
+    elements.stopCam.addEventListener("click", () => {
+        state.stream?.getTracks().forEach(t => t.stop());
+        elements.cameraFeed.srcObject = null;
+        state.cameraActive = false;
+        elements.startCam.classList.remove("hidden");
+        elements.stopCam.classList.add("hidden");
+        disableScanButtons();
+    });
+
+    function enableScanButtons() {
+        elements.scanNutritionBtn.disabled = false;
+        elements.scanIngredientsBtn.disabled = false;
+    }
+
+    function disableScanButtons() {
+        elements.scanNutritionBtn.disabled = true;
+        elements.scanIngredientsBtn.disabled = true;
+    }
+
+    function captureImage() {
+        const canvas = document.createElement("canvas");
+        canvas.width = elements.cameraFeed.videoWidth || 1280;
+        canvas.height = elements.cameraFeed.videoHeight || 720;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(elements.cameraFeed, 0, 0, canvas.width, canvas.height);
+        state.lastImage = canvas.toDataURL("image/jpeg");
+        return state.lastImage;
+    }
+
+    // DRAG & DROP
+    const dropZone = elements.dropZone;
+    const fileInput = elements.fileInput;
+
+    dropZone.addEventListener("click", () => fileInput.click());
+
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, e => { e.preventDefault(); e.stopPropagation(); }, false);
+    });
+
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => dropZone.classList.add('dragover'), false);
+    });
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, () => dropZone.classList.remove('dragover'), false);
+    });
+
+    dropZone.addEventListener('drop', e => {
+        const files = e.dataTransfer.files;
+        if (files.length) handleImage(files[0]);
+    });
+
+    fileInput.addEventListener('change', e => {
+        if (e.target.files.length) handleImage(e.target.files[0]);
+    });
+
+    function handleImage(file) {
+        if (!file.type.startsWith('image/')) return alert('Please upload an image.');
+        const reader = new FileReader();
+        reader.onload = ev => {
+            state.lastImage = ev.target.result;
+            enableScanButtons();
+            dropZone.innerHTML = `<i class="fas fa-check-circle" style="color:green;"></i><strong>Image loaded!</strong><br><small>${file.name}</small>`;
+            setTimeout(() => {
+                dropZone.innerHTML = `<i class="fas fa-cloud-upload-alt"></i><strong>Drag & drop your photo here</strong><br>or click to select<small>Supports JPG, PNG, WEBP</small><input type="file" id="file-input" accept="image/*" hidden />`;
+                elements.fileInput = document.getElementById("file-input");
+            }, 2000);
+        };
+        reader.readAsDataURL(file);
+    }
+
+    // TRAFFIC LIGHT: GREEN = SAFE TO EAT
+    function applyTrafficLightColors() {
+        const cards = document.querySelectorAll('#nutrition-list .result-card');
+        if (!cards.length || !state.bmi || !state.bmiCategory) return;
+
+        const thresholds = {
+            'Underweight':   { energy: [150, 300], sugars: [8, 16], salt: [0.3, 0.6] },
+            'Normal weight': { energy: [200, 400], sugars: [10, 20], salt: [0.3, 0.8] },
+            'Overweight':    { energy: [150, 300], sugars: [6, 12], salt: [0.2, 0.6] },
+            'Obesity':       { energy: [100, 200], sugars: [4, 10], salt: [0.1, 0.4] }
+        };
+        const limits = thresholds[state.bmiCategory] || thresholds['Normal weight'];
+
+        cards.forEach(card => {
+            const valueEl = card.querySelector('strong');
+            if (!valueEl) return;
+            const value = parseFloat(valueEl.textContent);
+            if (isNaN(value)) return;
+
+            card.classList.remove('green', 'yellow', 'red');
+
+            let type = '';
+            if (card.classList.contains('energy')) type = 'energy';
+            else if (card.classList.contains('sugars')) type = 'sugars';
+            else if (card.classList.contains('salt')) type = 'salt';
+            else return;
+
+            const [low, high] = limits[type];
+            if (value <= low) card.classList.add('green');     // SAFE
+            else if (value <= high) card.classList.add('yellow'); // CAUTION
+            else card.classList.add('red');                  // AVOID
+        });
+    }
+
+    function updateUKLabel(data) {
+        const n = data._raw || {};
+        const set = (id, val, unit) => {
+            const sub = document.getElementById(id + '-sub');
+            const right = document.getElementById(id + '-right');
+            if (val !== undefined) {
+                sub.textContent = `${Math.round(val)} ${unit}`;
+                if (id === 'energy') {
+                    right.textContent = `${Math.min(100, Math.round(val / 20))}%`;
+                    right.style.background = '#e2e8f0';
+                    right.style.color = '#111';
+                } else {
+                    let color = '';
+                    if (id === 'sugars') color = val <= 5 ? 'uk-green' : val <= 22.5 ? 'uk-amber' : 'uk-red';
+                    if (id === 'salt') color = val <= 0.3 ? 'uk-green' : val <= 1.5 ? 'uk-amber' : 'uk-red';
+                    right.className = 'uk-right ' + color;
+                }
+            }
+        };
+        set('energy', n.energy_kcal, 'kcal');
+        set('sugars', n.sugars_g, 'g');
+        set('salt', n.salt_g, 'g');
+    }
+
+    function parseNutrition(text) {
+        const out = {};
+        const regexes = [
+            [/energy|kcal|calories.*?(\d+(\.\d+)?)/i, 'energy_kcal'],
+            [/sugar[s]?\b.*?(\d+(\.\d+)?)/i, 'sugars_g'],
+            [/salt\b.*?(\d+(\.\d+)?)/i, 'salt_g']
+        ];
+
+        regexes.forEach(([re, key]) => {
+            const m = text.match(re);
+            if (m) out[key] = parseFloat(m[1]);
+        });
+
+        const arr = [];
+        if (out.energy_kcal) arr.push({ name: "Energy", val: out.energy_kcal, unit: "kcal", type: "energy" });
+        if (out.sugars_g) arr.push({ name: "Sugars", val: out.sugars_g, unit: "g", type: "sugars" });
+        if (out.salt_g) arr.push({ name: "Salt", val: out.salt_g, unit: "g", type: "salt" });
+        arr._raw = out;
+        return arr;
+    }
+
+    function displayNutrition(list) {
+        elements.nutritionList.innerHTML = "";
+        list.forEach(i => {
+            const card = document.createElement("div");
+            card.className = `result-card ${i.type}`;
+            card.innerHTML = `<div>${i.name} <small>(${i.val}${i.unit})</small></div><div><strong>${i.val}</strong></div>`;
+            elements.nutritionList.appendChild(card);
+        });
+        setTimeout(applyTrafficLightColors, 0);
+    }
+
+    const allergenKeywords = {
+        lactose: [/milk/, /lactose/, /dairy/, /whey/, /casein/],
+        egg:     [/egg/, /albumin/, /ovum/],
+        seafood: [/shrimp/, /crab/, /lobster/, /fish/, /shellfish/],
+        nuts:    [/nut/, /almond/, /cashew/, /walnut/, /peanut/],
+        gluten:  [/wheat/, /barley/, /rye/, /gluten/],
+        soy:     [/soy/, /soya/, /tofu/]
+    };
+
+    function checkAllergens(text) {
+        const found = [];
+        state.allergies.forEach(allergy => {
+            if (allergenKeywords[allergy]?.some(re => re.test(text))) found.push(allergy);
+        });
+        return found;
+    }
+
+    function displayAllergenWarnings(allergens) {
+        elements.ingredientList.innerHTML = "";
+        if (allergens.length === 0) {
+            const card = document.createElement("div");
+            card.className = "result-card";
+            card.innerHTML = `<div>All Clear — Safe!</div>`;
+            elements.ingredientList.appendChild(card);
+            elements.allergyWarning.classList.add("hidden");
+        } else {
+            elements.allergyWarning.classList.remove("hidden");
+            elements.allergyWarning.innerHTML = `<strong>Warning:</strong> Contains ${allergens.map(a => a.toUpperCase()).join(', ')}!`;
+            allergens.forEach(allergy => {
+                const card = document.createElement("div");
+                card.className = "result-card allergy";
+                card.innerHTML = `<div>Contains <strong>${allergy.toUpperCase()}</strong></div>`;
+                elements.ingredientList.appendChild(card);
+            });
+        }
+    }
+
+    // SCAN BUTTONS
+    elements.scanNutritionBtn.addEventListener("click", async () => {
+        if (!state.lastImage && state.cameraActive) state.lastImage = captureImage();
+        if (!state.lastImage) return alert("No image!");
+
+        elements.nutritionResults.classList.remove("hidden");
+        elements.ingredientResults.classList.add("hidden");
+        elements.nutritionList.innerHTML = "<p>Scanning nutrition...</p>";
+
+        try {
+            const { data: { text } } = await Tesseract.recognize(state.lastImage, 'eng');
+            const nutrients = parseNutrition(text.toLowerCase());
+            displayNutrition(nutrients);
+            updateUKLabel(nutrients);
+        } catch (err) {
+            elements.nutritionList.innerHTML = "<p style='color:red'>Scan failed. Try again.</p>";
+        }
+    });
+
+    elements.scanIngredientsBtn.addEventListener("click", async () => {
+        if (!state.lastImage && state.cameraActive) state.lastImage = captureImage();
+        if (!state.lastImage) return alert("No image!");
+
+        elements.ingredientResults.classList.remove("hidden");
+        elements.nutritionResults.classList.add("hidden");
+        elements.ingredientList.innerHTML = "<p>Scanning ingredients...</p>";
+        elements.allergyWarning.classList.add("hidden");
+
+        try {
+            const { data: { text } } = await Tesseract.recognize(state.lastImage, 'eng');
+            const allergens = checkAllergens(text.toLowerCase());
+            displayAllergenWarnings(allergens);
+        } catch (err) {
+            elements.ingredientList.innerHTML = "<p style='color:red'>Scan failed.</p>";
+        }
+    });
+</script>
+</body>
+</html>

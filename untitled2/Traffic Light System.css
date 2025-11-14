@@ -1,0 +1,57 @@
+/* TRAFFIC LIGHT NUTRITION LABEL STYLE - paste INSIDE your existing <style> tag */
+
+/* container for vertical stacked cards */
+#ingredients-list {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px;
+}
+
+/* base card */
+.ingredient-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 260px;                /* adjust width as needed */
+    border: 3px solid #ccc;
+    border-radius: 10px;
+    padding: 10px 12px;
+    background: #fff;
+    font-family: "Kumbh Sans", sans-serif;
+    font-weight: 700;
+    transition: transform .12s ease, box-shadow .12s ease;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+}
+
+/* text */
+.ingredient-name { font-size: 16px; color: #222; }
+.ingredient-quantity { font-size: 15px; color: #111; font-weight: 900; }
+
+/* full-color border + colored left strip using gradient */
+.ingredient-card.green {
+    border-color: #2f9d4a;
+    background: linear-gradient(to right, #2f9d4a 22%, #ffffff 22%);
+}
+.ingredient-card.yellow {
+    border-color: #f2c200;
+    background: linear-gradient(to right, #f2c200 22%, #ffffff 22%);
+}
+.ingredient-card.red {
+    border-color: #d93b3b;
+    background: linear-gradient(to right, #d93b3b 22%, #ffffff 22%);
+}
+
+/* optional hover */
+.ingredient-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+}
+
+/* responsive (smaller screens) */
+@media (max-width: 480px) {
+    .ingredient-card { width: 200px; padding: 8px 10px; }
+    .ingredient-name { font-size: 14px; }
+    .ingredient-quantity { font-size: 13px; }
+}
