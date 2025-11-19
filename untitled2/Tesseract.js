@@ -1,247 +1,239 @@
-function applyTrafficLightColors() {
-    const cards = document.querySelectorAll('#nutrition-list .result-card');
-    if (!cards.length || !state.bmi || !state.bmiCategory) return;
-
-    const thresholds = {
-        'Underweight':   { energy: [150, 300], sugars: [8, 16], salt: [0.3, 0.6] },
-        'Normal weight': { energy: [200, 400], sugars: [10, 20], salt: [0.3, 0.8] },
-        'Overweight':    { energy: [150, 300], sugars: [6, 12], salt: [0.2, 0.6] },
-        'Obesity':       { energy: [100, 200], sugars: [4, 10], salt: [0.1, 0.4] }
+function initNutriScanner() {
+    const state = {
+        lastImage: null,
+        cameraActive: false,
+        stream: null,
+        allergies: [],
+        worker: null  // ← persistent worker (no re-creation = no hanging)
     };
-    const limits = thresholds[state.bmiCategory] || thresholds['Normal weight'];
 
-    cards.forEach(card => {
-        const valueEl = card.querySelector('strong');
-        if (!valueEl) return;
-        const value = parseFloat(valueEl.textContent);
-        if (isNaN(value)) return;
+    // ==================== TESSERACT WORKER (REUSED – NEVER HANGS) ====================
+    async function ensureWorker() {
+        if (state.worker) return state.worker;
 
-        card.classList.remove('green', 'yellow', 'red');
+        state.worker = await Tesseract.createWorker({
+            logger: m => {
+                if (m.status === 'recognizing text') {
+                    const progress = Math.round(m.progress * 100);
+                    document.getElementById('nutrition-list').innerHTML = `Scanning... ${progress}%`;
+                    document.getElementById('ingredient-list').innerHTML = `Scanning... ${progress}%`;
+                }
+            }
+        });
 
-        let type = '';
-        if (card.classList.contains('energy')) type = 'energy';
-        else if (card.classList.contains('sugars')) type = 'sugars';
-        else if (card.classList.contains('salt')) type = 'salt';
-        else return;
+        await state.worker.load();
+        await state.worker.loadLanguage('eng');
+        await state.worker.initialize('eng');
 
-        const [low, high] = limits[type];
-        if (value <= low) card.classList.add('green');     // SAFE TO EAT
-        else if (value <= high) card.classList.add('yellow'); // CAUTION
-        else card.classList.add('red');                  // AVOID
-    });
-}
+        // Best settings for nutrition labels
+        await state.worker.setParameters({
+            tessedit_char_whitelist: '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz %.,:-()[]mgkgcalorieskcalsugarsodiumsaltfatproteincarbsfiber',
+            preserve_interword_spaces: '1',
+            tessedit_pageseg_mode: '6',  // Assume a single block of text
+        });
 
-function updateUKLabel(data) {
-    const n = data._raw || {};
-    const set = (id, val, unit) => {
-        const sub = document.getElementById(id + '-sub');
-        const right = document.getElementById(id + '-right');
-        if (val !== undefined) {
-            sub.textContent = `${Math.round(val)} ${unit}`;
-            if (id === 'energy') {
-                right.textContent = `${Math.min(100, Math.round(val / 20))}%`;
-                right.style.background = '#e2e8f0';
-                right.style.color = '#111';
-            } else {
-                let color = '';
-                if (id === 'sugars') color = val <= 5 ? 'uk-green' : val <= 22.5 ? 'uk-amber' : 'uk-red';
-                if (id === 'salt') color = val <= 0.3 ? 'uk-green' : val <= 1.5 ? 'uk-amber' : 'uk-red';
-                right.className = 'uk-right ' + color;
+        return state.worker;
+    }
+
+    // ==================== SUPER ACCURATE NUTRITION PARSER ====================
+    function parseNutrition(text) {
+        const lines = text.toLowerCase().split('\n');
+        const result = { calories: null, fat: null, sugar: null, sodium: null };
+
+        for (let line of lines) {
+            line = line.replace(/[^a-z0-9.%\s]/g, ' ').trim();
+
+            // Calories
+            if (!result.calories && /(calorie|energy|kcal)/.test(line)) {
+                const match = line.match(/(\d{2,4})/);
+                if (match && parseInt(match[1]) > 10 && parseInt(match[1]) < 4000) {
+                    result.calories = parseInt(match[1]);
+                }
+            }
+
+            // Total Fat
+            if (!result.fat && /total.? ?fat/.test(line)) {
+                const match = line.match(/(\d+(?:\.\d+)?)\s*g/);
+                if (match) result.fat = parseFloat(match[1]).toFixed(1);
+            }
+
+            // Sugars
+            if (!result.sugar && /(total sugars?|sugars?)/.test(line) && !/added/.test(line)) {
+                const match = line.match(/(\d+(?:\.\d+)?)\s*g/);
+                if (match) result.sugar = parseFloat(match[1]).toFixed(1);
+            }
+
+            // Sodium
+            if (!result.sodium && /(sodium|salt|na)/.test(line)) {
+                const match = line.match(/(\d+(?:\.\d+)?)\s*(mg|g)/);
+                if (match) {
+                    let val = parseFloat(match[1]);
+                    if (match[2] === 'g') val *= 1000;
+                    result.sodium = Math.round(val);
+                }
             }
         }
-    };
-    set('energy', n.energy_kcal, 'kcal');
-    set('sugars', n.sugars_g, 'g');
-    set('salt', n.salt_g, 'g');
-}
+        return result;
+    }
 
-function parseNutrition(text) {
-    const out = {};
-    const regexes = [
-        [/energy|kcal|calories.*?(\d+(\.\d+)?)/i, 'energy_kcal'],
-        [/sugar[s]?\b.*?(\d+(\.\d+)?)/i, 'sugars_g'],
-        [/salt\b.*?(\d+(\.\d+)?)/i, 'salt_g']
-    ];
+    function displayNutrition(data) {
+        const container = document.getElementById('nutrition-list');
+        let html = '';
 
-    regexes.forEach(([re, key]) => {
-        const m = text.match(re);
-        if (m) out[key] = parseFloat(m[1]);
-    });
+        if (data.calories !== null)
+            html += `<div class="result-box ${data.calories < 150 ? 'good' : data.calories < 350 ? 'okay' : 'bad'}">
+                        Calories <strong>${data.calories}</strong>
+                     </div>`;
 
-    const arr = [];
-    if (out.energy_kcal) arr.push({ name: "Energy", val: out.energy_kcal, unit: "kcal", type: "energy" });
-    if (out.sugars_g) arr.push({ name: "Sugars", val: out.sugars_g, unit: "g", type: "sugars" });
-    if (out.salt_g) arr.push({ name: "Salt", val: out.salt_g, unit: "g", type: "salt" });
-    arr._raw = out;
-    return arr;
-}
+        if (data.fat !== null)
+            html += `<div class="result-box ${data.fat < 5 ? 'good' : data.fat < 15 ? 'okay' : 'bad'}">
+                        Total Fat <strong>${data.fat}g</strong>
+                     </div>`;
 
-function displayNutrition(list) {
-    const container = document.getElementById('nutrition-list');
-    container.innerHTML = "";
-    list.forEach(i => {
-        const card = document.createElement("div");
-        card.className = `result-card ${i.type}`;
-        card.innerHTML = `<div>${i.name} <small>(${i.val}${i.unit})</small></div><div><strong>${i.val}</strong></div>`;
-        container.appendChild(card);
-    });
-    setTimeout(applyTrafficLightColors, 0);
-}
+        if (data.sugar !== null)
+            html += `<div class="result-box ${data.sugar < 5 ? 'good' : data.sugar < 12 ? 'okay' : 'bad'}">
+                        Sugar <strong>${data.sugar}g</strong>
+                     </div>`;
 
-const allergenKeywords = {
-    lactose: [/milk/, /lactose/, /dairy/, /whey/, /casein/],
-    egg:     [/egg/, /albumin/, /ovum/],
-    seafood: [/shrimp/, /crab/, /lobster/, /fish/, /shellfish/],
-    nuts:    [/nut/, /almond/, /cashew/, /walnut/, /peanut/],
-    gluten:  [/wheat/, /barley/, /rye/, /gluten/],
-    soy:     [/soy/, /soya/, /tofu/]
-};
+        if (data.sodium !== null)
+            html += `<div class="result-box ${data.sodium < 140 ? 'good' : data.sodium < 400 ? 'okay' : 'bad'}">
+                        Sodium <strong>${data.sodium}mg</strong>
+                     </div>`;
 
-function checkAllergens(text) {
-    const found = [];
-    state.allergies.forEach(allergy => {
-        if (allergenKeywords[allergy]?.some(re => re.test(text))) {
-            found.push(allergy);
+        if (!html) html = '<div class="result-box bad">Could not detect nutrition info. Try a clearer photo.</div>';
+
+        container.innerHTML = html;
+    }
+
+    function checkAllergens(text) {
+        const lower = text.toLowerCase();
+        return state.allergies.filter(allergy => lower.includes(allergy));
+    }
+
+    function displayAllergenWarnings(found) {
+        const container = document.getElementById('ingredient-list');
+        if (found.length === 0) {
+            container.innerHTML = `<div class="result-box good" style="font-size:3rem;padding:60px">
+                                      All Clear – Safe to Eat!
+                                   </div>`;
+        } else {
+            container.innerHTML = `<div class="result-box bad" style="font-size:3rem;padding:60px">
+                                      Contains: <strong>${found.map(a => a.toUpperCase()).join(', ')}</strong><br><br>
+                                      NOT SAFE!
+                                   </div>`;
+        }
+    }
+
+    // ==================== SCAN FUNCTIONS (NOW NEVER FREEZE) ====================
+    async function scanNutrition() {
+        if (!state.lastImage && state.cameraActive) captureImage();
+        if (!state.lastImage) return alert("Please take or upload a photo first");
+
+        document.getElementById('nutrition-results').classList.remove('hidden');
+        document.getElementById('ingredient-results').classList.add('hidden');
+        document.getElementById('nutrition-list').innerHTML = "Initializing scanner...";
+
+        try {
+            const worker = await ensureWorker();
+            const { data: { text } } = await worker.recognize(state.lastImage);
+            const nutrients = parseNutrition(text);
+            displayNutrition(nutrients);
+        } catch (err) {
+            console.error(err);
+            document.getElementById('nutrition-list').innerHTML = '<p style="color:red">Scan failed – try better lighting or angle</p>';
+        }
+    }
+
+    async function scanIngredients() {
+        if (!state.lastImage && state.cameraActive) captureImage();
+        if (!state.lastImage) return alert("Please take or upload a photo first");
+
+        document.getElementById('ingredient-results').classList.remove('hidden');
+        document.getElementById('nutrition-results').classList.add('hidden');
+        document.getElementById('ingredient-list').innerHTML = "Scanning ingredients...";
+
+        try {
+            const worker = await ensureWorker();
+            const { data: { text } } = await worker.recognize(state.lastImage);
+            const found = checkAllergens(text);
+            displayAllergenWarnings(found);
+        } catch (err) {
+            document.getElementById('ingredient-list').innerHTML = '<p style="color:red">Scan failed</p>';
+        }
+    }
+
+    // ==================== CAMERA & IMAGE HANDLING ====================
+    function captureImage() {
+        const video = document.getElementById('camera-feed');
+        if (!video || video.readyState < 2) return;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+
+        state.lastImage = canvas.toDataURL('image/jpeg', 0.92);
+        showImagePreview(state.lastImage);
+    }
+
+    function showImagePreview(src) {
+        const img = document.getElementById('uploaded-img');
+        const preview = document.getElementById('image-preview');
+        if (img) img.src = src;
+        if (preview) preview.classList.remove('hidden');
+
+        // Enable scan buttons
+        document.getElementById('scan-nutrition')?.removeAttribute('disabled');
+        document.getElementById('scan-ingredients')?.removeAttribute('disabled');
+    }
+
+    function clearImage() {
+        state.lastImage = null;
+        document.getElementById('image-preview')?.classList.add('hidden');
+        document.getElementById('scan-nutrition')?.setAttribute('disabled', 'true');
+        document.getElementById('scan-ingredients')?.setAttribute('disabled', 'true');
+    }
+
+    // ==================== EVENT LISTENERS ====================
+    document.getElementById('profile-form')?.addEventListener('submit', e => {
+        e.preventDefault();
+        state.allergies = Array.from(document.querySelectorAll('input[name="allergy"]:checked'))
+            .map(c => c.value.toLowerCase());
+
+        document.getElementById('login-section').classList.add('hidden');
+        document.getElementById('dashboard').classList.remove('hidden');
+
+        // Auto-start camera on mobile
+        if (navigator.mediaDevices) {
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+                .then(stream => {
+                    state.stream = stream;
+                    state.cameraActive = true;
+                    document.getElementById('camera-feed').srcObject = stream;
+                })
+                .catch(() => console.log("Camera denied"));
         }
     });
-    return found;
-}
 
-function displayAllergenWarnings(allergens) {
-    const container = document.getElementById('ingredient-list');
-    const banner = document.getElementById('allergy-warning');
+    document.getElementById('scan-nutrition')?.addEventListener('click', scanNutrition);
+    document.getElementById('scan-ingredients')?.addEventListener('click', scanIngredients);
+    document.getElementById('capture-btn')?.addEventListener('click', captureImage);
 
-    container.innerHTML = "";
-    if (banner) banner.classList.add('hidden');
-
-    if (allergens.length === 0) {
-        const card = document.createElement("div");
-        card.className = "result-card";
-        card.innerHTML = `<div>All Clear — Safe!</div>`;
-        container.appendChild(card);
-        return;
-    }
-
-    if (banner) {
-        banner.innerHTML = `<strong>Warning:</strong> Contains ${allergens.map(a => a.toUpperCase()).join(', ')}!`;
-        banner.classList.remove('hidden');
-    }
-
-    allergens.forEach(allergy => {
-        const card = document.createElement("div");
-        card.className = "result-card allergy";
-        card.innerHTML = `<div>Contains <strong>${allergy.toUpperCase()}</strong></div>`;
-        container.appendChild(card);
-    });
-}
-
-function scanNutrition() {
-    if (!state.lastImage && state.cameraActive) state.lastImage = captureImage();
-    if (!state.lastImage) return alert("No image! Use camera or upload.");
-
-    document.getElementById('nutrition-results').classList.remove('hidden');
-    document.getElementById('ingredient-results').classList.add('hidden');
-    document.getElementById('nutrition-list').innerHTML = "<p>Scanning nutrition...</p>";
-
-    Tesseract.recognize(state.lastImage, 'eng')
-        .then(({ data: { text } }) => {
-            const nutrients = parseNutrition(text.toLowerCase());
-            displayNutrition(nutrients);
-            updateUKLabel(nutrients);
-        })
-        .catch(err => {
-            document.getElementById('nutrition-list').innerHTML = "<p style='color:red'>Scan failed. Try again.</p>";
-        });
-}
-
-function scanIngredients() {
-    if (!state.lastImage && state.cameraActive) state.lastImage = captureImage();
-    if (!state.lastImage) return alert("No image!");
-
-    document.getElementById('ingredient-results').classList.remove('hidden');
-    document.getElementById('nutrition-results').classList.add('hidden');
-    document.getElementById('ingredient-list').innerHTML = "<p>Scanning ingredients...</p>";
-    document.getElementById('allergy-warning').classList.add('hidden');
-
-    Tesseract.recognize(state.lastImage, 'eng')
-        .then(({ data: { text } }) => {
-            const allergens = checkAllergens(text.toLowerCase());
-            displayAllergenWarnings(allergens);
-        })
-        .catch(err => {
-            document.getElementById('ingredient-list').innerHTML = "<p style='color:red'>Scan failed.</p>";
-        });
-}
-
-function captureImage() {
-    const video = document.getElementById('camera-feed');
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth || 1280;
-    canvas.height = video.videoHeight || 720;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    state.lastImage = canvas.toDataURL('image/jpeg');
-    return state.lastImage;
-}
-
-function setupDragAndDrop() {
-    const dropZone = document.getElementById('drop-zone');
-    const fileInput = document.getElementById('file-input');
-
-    dropZone.addEventListener('click', () => fileInput.click());
-
-    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, e => { e.preventDefault(); e.stopPropagation(); }, false);
+    // File upload support
+    document.getElementById('file-input')?.addEventListener('change', e => {
+        if (e.target.files[0]) {
+            const reader = new FileReader();
+            reader.onload = () => {
+                state.lastImage = reader.result;
+                showImagePreview(state.lastImage);
+            };
+            reader.readAsDataURL(e.target.files[0]);
+        }
     });
 
-    ['dragenter', 'dragover'].forEach(eventName => {
-        dropZone.addEventListener(eventName, () => dropZone.classList.add('dragover'), false);
-    });
-    ['dragleave', 'drop'].forEach(eventName => {
-        dropZone.addEventListener(eventName, () => dropZone.classList.remove('dragover'), false);
-    });
-
-    dropZone.addEventListener('drop', e => {
-        const files = e.dataTransfer.files;
-        if (files.length) handleImage(files[0]);
-    });
-
-    fileInput.addEventListener('change', e => {
-        if (e.target.files.length) handleImage(e.target.files[0]);
-    });
+    // Optional: expose for debugging
+    window.nutriDebug = { state, captureImage, scanNutrition, scanIngredients };
 }
 
-function handleImage(file) {
-    if (!file.type.startsWith('image/')) return alert('Please upload an image.');
-    const reader = new FileReader();
-    reader.onload = ev => {
-        state.lastImage = ev.target.result;
-        enableScanButtons();
-        const dropZone = document.getElementById('drop-zone');
-        dropZone.innerHTML = `<i class="fas fa-check-circle" style="color:green;"></i><strong>Image loaded!</strong><br><small>${file.name}</small>`;
-        setTimeout(() => {
-            dropZone.innerHTML = `<i class="fas fa-cloud-upload-alt"></i><strong>Drag & drop your photo here</strong><br>or click to select<small>Supports JPG, PNG, WEBP</small><input type="file" id="file-input" accept="image/*" hidden />`;
-            document.getElementById('file-input').addEventListener('change', e => {
-                if (e.target.files.length) handleImage(e.target.files[0]);
-            });
-        }, 2000);
-    };
-    reader.readAsDataURL(file);
-}
-
-function enableScanButtons() {
-    document.getElementById('scan-nutrition').disabled = false;
-    document.getElementById('scan-ingredients').disabled = false;
-}
-
-function disableScanButtons() {
-    document.getElementById('scan-nutrition').disabled = true;
-    document.getElementById('scan-ingredients').disabled = true;
-}
-
-// BUTTON LISTENERS
-document.getElementById('scan-nutrition').addEventListener('click', scanNutrition);
-document.getElementById('scan-ingredients').addEventListener('click', scanIngredients);
-
-// Initialize
-setupDragAndDrop();
+// ALWAYS START HERE
+document.addEventListener('DOMContentLoaded', initNutriScanner);
